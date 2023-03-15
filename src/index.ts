@@ -3,7 +3,7 @@ import Taro from '@tarojs/taro'
 console.log('🚀 ~ file: index.ts:3 ~ Taro', Taro)
 
 setTimeout(() => {
-  import('@tarojs/taro').then((res) => {
+  import('@tarojs/taro').then(res => {
     console.log('🚀 ~ file: index.ts:8 ~ import ~ myTaro', res)
   })
 }, 1500)
@@ -22,6 +22,7 @@ export interface PersistOptions {
   enforceCustomStorage?: boolean
   H5Storage?: Storage
   strategies?: PersistStrategy[]
+  timer?: number
 }
 
 type Store = PiniaPluginContext['store']
@@ -45,16 +46,51 @@ const updateStorage = (strategy: PersistStrategy, store: Store, options?: Persis
       finalObj[key] = store.$state[key]
       return finalObj
     }, {} as PartialState)
+    const stateWithTimeStamp = addTimeStamp(partialState, options?.timer)
+
     if (isCustomStorage && storage) {
-      storage.setItem(storeKey, JSON.stringify(partialState))
+      storage.setItem(storeKey, JSON.stringify(stateWithTimeStamp))
     } else {
-      Taro.setStorage({ key: storeKey, data: JSON.stringify(partialState) })
+      Taro.setStorage({
+        key: storeKey,
+        data: JSON.stringify(stateWithTimeStamp),
+      })
     }
   } else if (isCustomStorage && storage) {
-    storage.setItem(storeKey, JSON.stringify(store.$state))
+    storage.setItem(storeKey, JSON.stringify(addTimeStamp(store.$state, options?.timer)))
   } else {
-    Taro.setStorage({ key: storeKey, data: JSON.stringify(store.$state) })
+    Taro.setStorage({
+      key: storeKey,
+      data: JSON.stringify(addTimeStamp(store.$state, options?.timer)),
+    })
   }
+}
+
+/**
+ * 缓存数据添加时间戳
+ * @param data{any}
+ * @param timer{number} 缓存时间，单位小时
+ * @returns {{data: *, timer: number, createAt: number}}
+ * @example 
+ * addTimeStamp({a: 1}, 24) => {data: {a: 1}, timer: 86400000, createAt: 1620000000000}
+ */
+const addTimeStamp = (data, timer = 24) => {
+  return {
+    data,
+    timer: timer * 60 * 60 * 1e3,
+    createAt: new Date().getTime(),
+  }
+}
+
+/**
+ * 判断缓存是否过期
+ * @param data{any}
+ * @returns {boolean}
+ * @example
+ * judgeTimeStamp({data: {a: 1}, timer: 86400000, createAt: 1620000000000}) => false
+ */
+const judgeTimeStamp = data => {
+  return data.createAt != null && data.createAt + data.timer <= new Date().getTime()
 }
 
 export default ({ options, store }: PiniaPluginContext): void => {
@@ -70,10 +106,10 @@ export default ({ options, store }: PiniaPluginContext): void => {
       ? options.persist?.strategies
       : defaultStrat
 
-    strategies.forEach((strategy) => {
+    strategies.forEach(strategy => {
       const storage = strategy.storage || options.persist?.H5Storage || window?.sessionStorage
       const storeKey = strategy.key || store.$id
-      let storageResult
+      let storageResult: string | null
       if (isH5 || options.persist?.enforceCustomStorage) {
         storageResult = storage.getItem(storeKey)
       } else {
@@ -81,8 +117,14 @@ export default ({ options, store }: PiniaPluginContext): void => {
       }
 
       if (storageResult) {
-        store.$patch(JSON.parse(storageResult))
-        updateStorage(strategy, store, options.persist)
+        // 去掉时间戳
+        const hasTimeOut = judgeTimeStamp(JSON.parse(storageResult))
+        if (hasTimeOut) {
+          Taro.removeStorage({ key: storeKey })
+        } else {
+          store.$patch(JSON.parse(storageResult)?.data)
+          updateStorage(strategy, store, options.persist)
+        }
       }
     })
 

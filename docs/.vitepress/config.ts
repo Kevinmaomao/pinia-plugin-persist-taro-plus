@@ -52,6 +52,10 @@ export default defineConfig({
                 text: 'Custom Storage',
                 link: '/advanced/custom-storage',
               },
+              {
+                text: 'Custom Cache',
+                link: '/advanced/custom-cache',
+              },
             ],
           },
         ],
